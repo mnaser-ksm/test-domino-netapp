@@ -1,0 +1,37 @@
+
+---
+
+## 2) `config/migration.yaml` (what to put)
+
+This file defines **where input is**, **where outputs go**, and **what to migrate**.
+
+```yaml
+run:
+  name: "netapp-practice-migration"
+  mode: "full"               # full | delta (starter: full)
+  fail_fast: true
+
+paths:
+  raw_dir: "/mnt/data/raw"
+  staging_dir: "/mnt/data/staging"
+  output_dir: "/mnt/data/output"
+  reports_dir: "/mnt/data/reports"
+  logs_dir: "/mnt/data/logs"
+
+inputs:
+  # For the starter kit, we migrate one CSV file.
+  source_file: "patients.csv"          # located under raw_dir
+  expected_columns: ["patient_id", "age", "site"]
+
+transform:
+  # simple example transform rules
+  filter:
+    min_age: 0                         # keep all by default
+  add_columns:
+    migrated_at_utc: true              # adds timestamp column
+    run_id: true                       # adds a run identifier
+
+outputs:
+  output_file: "patients_migrated.csv" # written under output_dir
+  report_file: "migration_report.json" # written under reports_dir
+  log_file: "migration_run.log"        # written under logs_dir
