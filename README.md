@@ -1,4 +1,4 @@
-```md
+
 # NetApp Volume Data Migration (Domino Workspace)
 
 This repository is a **starter data-migration pipeline** designed to run inside a **Domino Workspace** and write all data, outputs, logs, and reports to a **NetApp-backed Domino Volume**.
@@ -18,8 +18,7 @@ Nothing important is stored inside the workspace container.
 
 ## Repository structure
 
-```
-
+```text
 migration/
 ├── README.md
 ├── config/
@@ -29,8 +28,7 @@ migration/
 ├── jobs/
 │   └── run.sh
 └── requirements.txt
-
-```
+````
 
 ---
 
@@ -38,15 +36,13 @@ migration/
 
 These directories live on the NetApp volume and must exist:
 
-```
-
+```text
 /mnt/data/raw        # input data
 /mnt/data/staging    # intermediate data
 /mnt/data/output     # final migrated data
 /mnt/data/reports    # QC / migration reports
 /mnt/data/logs       # run logs
-
-````
+```
 
 > If your volume mounts to a different base path, update `config/migration.yaml`.
 
@@ -57,19 +53,23 @@ These directories live on the NetApp volume and must exist:
 Before running anything, make sure the following are true:
 
 1. **A Domino Project exists**
-   - Workspaces and Jobs always run inside a Project.
+
+   * Workspaces and Jobs always run inside a Project.
 
 2. **A NetApp-backed volume exists**
-   - Data Plane: NetApp  
-   - Filesystem: `domino-filesystem`
+
+   * Data Plane: NetApp
+   * Filesystem: `domino-filesystem`
 
 3. **The volume is mounted into your Workspace**
-   - When starting the workspace, attach the NetApp volume.
+
+   * When starting the workspace, attach the NetApp volume.
 
 Verify the mount:
+
 ```bash
 ls -lah /mnt/data
-````
+```
 
 If `/mnt/data` is empty or missing, the volume is not mounted.
 
@@ -131,7 +131,7 @@ pip install -r requirements.txt
 
 Open:
 
-```
+```text
 config/migration.yaml
 ```
 
@@ -205,7 +205,7 @@ If the files are still there, you have confirmed **persistent NetApp storage**.
 
 1. Place your real input files into:
 
-```
+```text
 /mnt/data/raw/
 ```
 
@@ -269,5 +269,4 @@ bash jobs/run.sh config/migration.yaml
 
 This makes the migration repeatable, auditable, and production-ready.
 
-```
-```
+
