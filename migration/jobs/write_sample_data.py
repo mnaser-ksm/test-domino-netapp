@@ -1,6 +1,6 @@
 import os
 
-BASE_PATH = "/mnt/data/test_netapp/sample_load_python"
+BASE_PATH = "/mnt/data/test-netapp/sample_load_python"
 
 os.makedirs(BASE_PATH, exist_ok=True)
 
