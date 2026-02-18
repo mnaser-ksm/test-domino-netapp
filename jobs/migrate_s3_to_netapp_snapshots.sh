@@ -1,10 +1,9 @@
-```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 # ==========================================================
 # S3 -> NetApp Volume -> NetApp Snapshot (Domino RemoteFS)
-# RemoteFS API base (from your Swagger example):
+# RemoteFS API base (from your Swagger):
 #   https://ksm.domino.tech/remotefs/v1
 #
 # What this does:
@@ -17,12 +16,9 @@ set -euo pipefail
 #   NETAPP_VOLUME_DIR
 #   DOMINO_BASE_URL          (e.g., https://ksm.domino.tech)
 #   DOMINO_USER_API_KEY
+#   NETAPP_VOLUME_ID         (recommended; e.g., 17866703-d866-4ec2-a5d6-16f6b8c8a3f9)
 #
-# One of these is required:
-#   NETAPP_VOLUME_ID         (recommended; e.g., 1786...)
-#   NETAPP_VOLUME_UNIQUE_NAME (fallback lookup; e.g., test_netapp)
-#
-# Optional:
+# Optional env vars:
 #   S3_PREFIX (default sdtm/)
 #   DEST_SUBDIR (default sdtm)
 #   SNAPSHOT_TAG
@@ -35,10 +31,7 @@ set -euo pipefail
 : "${NETAPP_VOLUME_DIR:?Must set NETAPP_VOLUME_DIR (e.g., /mnt/netapp-volumes/test_netapp)}"
 : "${DOMINO_BASE_URL:?Must set DOMINO_BASE_URL (e.g., https://ksm.domino.tech)}"
 : "${DOMINO_USER_API_KEY:?Must set DOMINO_USER_API_KEY (Domino user API key)}"
-
-# --- OPTIONAL / FALLBACK INPUTS ---
-NETAPP_VOLUME_ID="${NETAPP_VOLUME_ID:-}"                   # recommended
-NETAPP_VOLUME_UNIQUE_NAME="${NETAPP_VOLUME_UNIQUE_NAME:-}" # fallback if no ID is provided
+: "${NETAPP_VOLUME_ID:?Must set NETAPP_VOLUME_ID (e.g., 17866703-d866-4ec2-a5d6-16f6b8c8a3f9)}"
 
 # --- OPTIONAL INPUTS ---
 S3_PREFIX="${S3_PREFIX:-sdtm/}"
@@ -77,8 +70,7 @@ echo "Time (UTC): $(date -u)" | tee -a "$LOG_FILE"
 echo "S3 Source: $SRC" | tee -a "$LOG_FILE"
 echo "NetApp Destination: $DEST" | tee -a "$LOG_FILE"
 echo "RemoteFS API Base: $REMOTEFS_BASE" | tee -a "$LOG_FILE"
-echo "NETAPP_VOLUME_ID: ${NETAPP_VOLUME_ID:-<not set>}" | tee -a "$LOG_FILE"
-echo "NETAPP_VOLUME_UNIQUE_NAME: ${NETAPP_VOLUME_UNIQUE_NAME:-<not set>}" | tee -a "$LOG_FILE"
+echo "NETAPP_VOLUME_ID: $NETAPP_VOLUME_ID" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 echo "Checking AWS identity..." | tee -a "$LOG_FILE"
@@ -108,42 +100,7 @@ du -sh "$DEST" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 
 # -----------------------
-# Resolve NetApp Volume ID (if not provided)
-# -----------------------
-if [[ -z "$NETAPP_VOLUME_ID" ]]; then
-  if [[ -z "$NETAPP_VOLUME_UNIQUE_NAME" ]]; then
-    echo "ERROR: Must set either NETAPP_VOLUME_ID (recommended) or NETAPP_VOLUME_UNIQUE_NAME." | tee -a "$LOG_FILE"
-    exit 1
-  fi
-
-  echo "Looking up volume ID from RemoteFS API by uniqueName='$NETAPP_VOLUME_UNIQUE_NAME'..." | tee -a "$LOG_FILE"
-  VOLS_JSON="$(curl -fsS -H "$API_KEY_HEADER" -H "$ACCEPT_HEADER" "$REMOTEFS_BASE/volumes")"
-
-  NETAPP_VOLUME_ID="$(python3 - <<'PY'
-import json,sys
-obj=json.loads(sys.stdin.read())
-vols = obj.get("data", obj) if isinstance(obj, dict) else obj
-uniq = sys.argv[1]
-for v in vols:
-    if v.get("uniqueName") == uniq:
-        print(v.get("id",""))
-        break
-PY
-"$NETAPP_VOLUME_UNIQUE_NAME" <<< "$VOLS_JSON")"
-
-  if [[ -z "$NETAPP_VOLUME_ID" ]]; then
-    echo "ERROR: Could not find volume with uniqueName='$NETAPP_VOLUME_UNIQUE_NAME'." | tee -a "$LOG_FILE"
-    echo "Tip: Inspect volumes: curl -H 'X-Domino-Api-Key: ***' '$REMOTEFS_BASE/volumes'" | tee -a "$LOG_FILE"
-    exit 1
-  fi
-
-  echo "Found volume id: $NETAPP_VOLUME_ID" | tee -a "$LOG_FILE"
-else
-  echo "Using provided NETAPP_VOLUME_ID: $NETAPP_VOLUME_ID" | tee -a "$LOG_FILE"
-fi
-
-# -----------------------
-# Create Snapshot
+# Create Snapshot (RemoteFS)
 # -----------------------
 SNAPSHOT_NAME="migration_${DEST_SUBDIR}_${RUN_ID}"
 CREATE_BODY="$(python3 - <<PY
@@ -159,14 +116,17 @@ echo "Creating snapshot..." | tee -a "$LOG_FILE"
 RESP="$(curl -sS -w "\nHTTP_STATUS:%{http_code}\n" -X POST \
   -H "$API_KEY_HEADER" -H "$JSON_HEADER" -H "$ACCEPT_HEADER" \
   -d "$CREATE_BODY" \
-  "$REMOTEFS_BASE/snapshots")"
+  "$REMOTEFS_BASE/snapshots" || true)"
 
 HTTP_STATUS="$(echo "$RESP" | sed -n 's/^HTTP_STATUS://p')"
 BODY="$(echo "$RESP" | sed '/^HTTP_STATUS:/d')"
 
+echo "Snapshot create HTTP status: $HTTP_STATUS" | tee -a "$LOG_FILE"
+
 if [[ "$HTTP_STATUS" != "200" && "$HTTP_STATUS" != "201" ]]; then
-  echo "ERROR: Snapshot create failed. HTTP $HTTP_STATUS" | tee -a "$LOG_FILE"
-  echo "$BODY" | tee -a "$LOG_FILE"
+  echo "ERROR: Snapshot create failed. Response body (first 2000 chars):" | tee -a "$LOG_FILE"
+  echo "$BODY" | head -c 2000 | tee -a "$LOG_FILE"
+  echo "" | tee -a "$LOG_FILE"
   exit 1
 fi
 
@@ -175,10 +135,10 @@ import json,sys
 obj=json.loads(sys.stdin.read())
 print(obj.get("id",""))
 PY
-<<< "$BODY")"
+<<< "$BODY" 2>/dev/null || true)"
 
-if [[ -z "$SNAPSHOT_ID" ]]; then
-  echo "ERROR: Snapshot creation returned no id." | tee -a "$LOG_FILE"
+if [[ -z "${SNAPSHOT_ID:-}" ]]; then
+  echo "ERROR: Snapshot creation succeeded but no snapshot id was found in response." | tee -a "$LOG_FILE"
   echo "$BODY" | tee -a "$LOG_FILE"
   exit 1
 fi
@@ -194,14 +154,17 @@ if [[ -n "$SNAPSHOT_TAG" ]]; then
   TAG_RESP="$(curl -sS -w "\nHTTP_STATUS:%{http_code}\n" -X POST \
     -H "$API_KEY_HEADER" -H "$JSON_HEADER" -H "$ACCEPT_HEADER" \
     -d "{\"name\":\"$SNAPSHOT_TAG\"}" \
-    "$REMOTEFS_BASE/snapshots/$SNAPSHOT_ID/tags")"
+    "$REMOTEFS_BASE/snapshots/$SNAPSHOT_ID/tags" || true)"
 
   TAG_STATUS="$(echo "$TAG_RESP" | sed -n 's/^HTTP_STATUS://p')"
   TAG_BODY="$(echo "$TAG_RESP" | sed '/^HTTP_STATUS:/d')"
 
+  echo "Snapshot tag HTTP status: $TAG_STATUS" | tee -a "$LOG_FILE"
+
   if [[ "$TAG_STATUS" != "200" && "$TAG_STATUS" != "201" && "$TAG_STATUS" != "204" ]]; then
-    echo "ERROR: Tagging failed. HTTP $TAG_STATUS" | tee -a "$LOG_FILE"
-    echo "$TAG_BODY" | tee -a "$LOG_FILE"
+    echo "ERROR: Tagging failed. Response body (first 2000 chars):" | tee -a "$LOG_FILE"
+    echo "$TAG_BODY" | head -c 2000 | tee -a "$LOG_FILE"
+    echo "" | tee -a "$LOG_FILE"
     exit 1
   fi
 
@@ -210,4 +173,3 @@ fi
 
 echo "" | tee -a "$LOG_FILE"
 echo "Done. Log written to: $LOG_FILE" | tee -a "$LOG_FILE"
-```
