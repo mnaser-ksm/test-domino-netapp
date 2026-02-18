@@ -130,18 +130,15 @@ if [[ "$HTTP_STATUS" != "200" && "$HTTP_STATUS" != "201" ]]; then
   exit 1
 fi
 
-SNAPSHOT_ID="$(python3 - <<'PY'
-import json,sys
-obj=json.loads(sys.stdin.read())
-print(obj.get("id",""))
-PY
-<<< "$BODY" 2>/dev/null || true)"
+# Extract snapshot id robustly (avoid JSONDecodeError issues)
+SNAPSHOT_ID="$(printf '%s' "$BODY" | tr -d '\r\n' | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -n 1)"
 
-if [[ -z "${SNAPSHOT_ID:-}" ]]; then
-  echo "ERROR: Snapshot creation succeeded but no snapshot id was found in response." | tee -a "$LOG_FILE"
+if [[ -z "$SNAPSHOT_ID" ]]; then
+  echo "ERROR: Snapshot creation returned an unexpected response (could not extract id)." | tee -a "$LOG_FILE"
   echo "$BODY" | tee -a "$LOG_FILE"
   exit 1
 fi
+
 
 echo "Snapshot created: name=$SNAPSHOT_NAME id=$SNAPSHOT_ID" | tee -a "$LOG_FILE"
 
